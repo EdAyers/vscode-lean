@@ -1,7 +1,10 @@
-import { CancellationToken, commands, Disposable, DocumentFilter, Hover,
+import {
+    CancellationToken, commands, Disposable, DocumentFilter, Hover,
     HoverProvider, languages, Position, Range, Selection, TextDocument,
     TextDocumentChangeEvent, TextEditor, TextEditorDecorationType,
-    TextEditorSelectionChangeEvent, window, workspace } from 'vscode';
+    TextEditorSelectionChangeEvent, window, workspace
+} from 'vscode';
+import { rsort } from 'semver';
 
 export interface Translations { [abbrev: string]: string; }
 
@@ -41,7 +44,7 @@ export class LeanInputExplanationHover implements HoverProvider, Disposable {
             if (this.customTranslations[k] === symbol) { abbrevs.push(k); }
         }
         for (const k in this.translations) {
-            if (this.customTranslations[k]) {continue;}
+            if (this.customTranslations[k]) { continue; }
             if (this.translations[k] === symbol) { abbrevs.push(k); }
         }
         return abbrevs;
@@ -59,69 +62,113 @@ export class LeanInputExplanationHover implements HoverProvider, Disposable {
         for (const s of this.subscriptions) { s.dispose(); }
     }
 }
+function rangeSize(r: Range): number {
+    return r.end.character - r.start.character;
+}
+
+interface rangeInfo {
+    index: number,
+    selection: Selection,
+    range: Range,
+    text: string
+}
+
 /* Each editor has their own abbreviation handler. */
 class TextEditorAbbrevHandler {
-    range: Range;
+    //ranges: Range[] = [];
+    active = false;
 
-    constructor(public editor: TextEditor, private abbreviator: LeanInputAbbreviator) {}
-
-    private updateRange(range?: Range) {
-        if (range && !range.isSingleLine) { range = null; }
-        this.range = range;
-        this.editor.setDecorations(this.abbreviator.decorationType, range ? [range] : []);
-        this.abbreviator.updateInputActive();
-
-        // HACK: support \{{}} and \[[]]
-        const hackyReplacements: {[input: string]: string} = {
-            [this.leader + '{{}}']: '⦃⦄',
-            [this.leader + '[[]]']: '⟦⟧',
-            [this.leader + '<>']: '⟨⟩',
-        };
-        if (range) {
-            const replacement = hackyReplacements[this.editor.document.getText(range)];
-            if (replacement) {
-                this.editor.edit(async (builder) => {
-                    await builder.replace(range, replacement);
-                    const pos = range.start.translate(0, 1);
-                    this.editor.selection = new Selection(pos, pos);
-                    this.updateRange();
-                });
-            }
-        }
-    }
-
+    constructor(public editor: TextEditor, private abbreviator: LeanInputAbbreviator) { }
     get leader(): string { return this.abbreviator.leader; }
     get enabled(): boolean { return this.abbreviator.enabled; }
 
-    get rangeSize(): number {
-        return this.range.end.character - this.range.start.character;
+
+    private deactivate() {
+        this.active = false;
+        this.editor.setDecorations(this.abbreviator.decorationType, []);
     }
 
-    convertRange(newRange?: Range) {
-        if (!this.range || this.rangeSize < 2) { return this.updateRange(); }
-
-        const range = this.range;
-
-        const toReplace = this.editor.document.getText(range);
-        if (toReplace[0] !== this.leader) { return this.updateRange(); }
-
-        const abbreviation = toReplace.slice(1);
-        const replacement = this.abbreviator.findReplacement(abbreviation);
-
-        if (replacement) {
-            setTimeout(async () => {
-                // Without the timeout hack, inserting `\delta ` at the beginning of an
-                // existing line would leave the cursor four characters too far right.
-                await this.editor.edit((builder) => builder.replace(range, replacement));
-                if (newRange) {
-                    this.updateRange(new Range(
-                        newRange.start.translate(0, replacement.length - toReplace.length),
-                        newRange.end.translate(0, replacement.length - toReplace.length)));
-                }
-            }, 0);
+    private getRangeInfo(incr_cursor = 0): rangeInfo[] {
+        if (!this.active) { return []; }
+        let selections = this.editor.selections;
+        if (selections.some(s => !s.isSingleLine || !s.isEmpty)) { return []; }
+        let ranges: rangeInfo[] = [];
+        for (let i = 0; i < selections.length; i++) {
+            let selection = selections[i];
+            let { line, character } = selection.active;
+            let fullLine = this.editor.document.lineAt(line).text;
+            character += incr_cursor;
+            let beforeCursor = this.editor.document.getText(new Range(line, 0, line, character));
+            let r = /\\\S*?$/.exec(beforeCursor);
+            if (!r) { continue; }
+            let s = r[0];
+            ranges.push({
+                index: i,
+                selection,
+                range: new Range(line, character - s.length, line, character),
+                text: s
+            });
         }
+        return ranges;
+    }
 
-        this.updateRange(newRange);
+    private update(incr_cursor = 0): void {
+        let ris = this.getRangeInfo(incr_cursor);
+        if (ris.length === 0) { return this.deactivate(); }
+        const hackyReplacements: { [input: string]: {repl:string,right?:string} } = {
+            [this.leader + '{{']: {repl:'⦃⦄',right : "}}"},
+            [this.leader + '[[']: {repl:'⟦⟧',right:"]]"},
+            [this.leader + '<>']: {repl:'⟨⟩'},
+        };
+        const replacements = [];
+        for (let i = 0; i < ris.length; i++) {
+            const ri = ris[i];
+            const replacement = hackyReplacements[ri.text];
+            if (replacement) {
+                let {repl,right} = replacement;
+                if (right) {
+                    let t = this.editor.document.getText(new Range(ri.range.end, ri.range.end.translate(0,right.length)))
+                    if (t !== right) {continue;}
+                }
+                const pos = ri.range.start.translate(0, 1);
+                const range = new Range(ri.range.start, ri.range.end.translate(0,(right && right.length) || 0));
+                replacements.push([ri.index, range, repl, pos]);
+                ris[i].text = "";
+                ris[i].range = new Range(pos, pos);
+            }
+        }
+        if (replacements.length !== 0) {
+            this.editor.edit(async builder => {
+                let ss = [...this.editor.selections];
+                for (let [i, range, repl, pos] of replacements) {
+                    builder.replace(range, repl);
+                    ss[i] = new Selection(pos,pos);
+                }
+                this.editor.selections = ss;
+            });
+        }
+        this.editor.setDecorations(this.abbreviator.decorationType, ris.map(x => x.range));
+
+    }
+    convert(): void {
+        let ris = this.getRangeInfo();
+        if (ris.length === 0) { return this.deactivate(); }
+        const replacements: [Range, string][] = [];
+        for (let i = 0; i < ris.length; i++) {
+            let { index, selection, range, text } = ris[i];
+            if (rangeSize(range) < 2) { continue; }
+            const abbreviation = text.slice(1);
+            const replacement = this.abbreviator.findReplacement(abbreviation);
+            replacements.push([range, replacement]);
+        }
+        if (replacements.length !== 0) {
+            setTimeout(async () => {
+                await this.editor.edit(builder =>
+                    replacements.forEach(([range, repl]) => builder.replace(range, repl))
+                );
+            }, 0)
+        }
+        this.deactivate();
     }
 
     onChanged(ev: TextDocumentChangeEvent) {
@@ -129,43 +176,34 @@ class TextEditorAbbrevHandler {
             // This event is triggered by files.autoSave=onDelay
             return;
         }
-        if (ev.contentChanges.length !== 1) { return this.updateRange(); } // single change
-        const change = ev.contentChanges[0];
-
-        if (change.text.length === 1 || change.text === '\r\n') {
-            // insert (or right paren overwriting)
-            if (!this.range) {
-                if (change.text === this.leader) {
-                    return this.updateRange(new Range(change.range.start, change.range.start.translate(0, 1)));
-                }
-            } else if (change.range.start.isEqual(this.range.end)) {
-                if (change.text === this.leader && this.rangeSize === 1) {
-                    this.updateRange();
-                    return this.editor.edit((builder) =>
-                        builder.delete(new Range(change.range.start, change.range.end.translate(0, 1))));
-                } else if (change.text === this.leader) {
-                    return this.convertRange(
-                        new Range(change.range.start, change.range.start.translate(0, 1)));
-                } else if (change.text.match(/^\s+|[)}⟩]$/)) {
-                    // whitespace, closing parens
-                    return this.convertRange();
-                }
+        let change = ev.contentChanges[0];
+        if (!this.active) {
+            if (change.text === this.leader) {
+                this.active = true;
+                return this.update(1);
+            }
+            else {
+                return;
             }
         }
-
-        if (this.range && this.range.contains(change.range) && this.range.start.isBefore(change.range.start)) {
-            // modification
-            return this.updateRange(new Range(this.range.start,
-                this.range.end.translate(0, change.text.length - change.rangeLength)));
+        else {
+            if (change.text === this.leader) {
+                return this.convert();
+            }
+            else if (change.text.match(/^\s+|[)}⟩]$/)) {
+                return this.convert();
+            }
+            else if (change.text === "") { // a backspace occurred
+                return this.update(-1);
+            }
+            else {
+                return this.update(change.text.length);
+            }
         }
-
-        this.updateRange();
     }
 
     onSelectionChanged(ev: TextEditorSelectionChangeEvent) {
-        if (ev.selections.length !== 1 || !this.range.contains(ev.selections[0].active)) {
-            this.convertRange();
-        }
+        return this.update();
     }
 }
 
@@ -183,7 +221,7 @@ export class LeanInputAbbreviator {
 
     constructor(private translations: Translations) {
         this.translations = Object.assign({}, translations);
-        this.allTranslations = {...this.translations, ...this.customTranslations};
+        this.allTranslations = { ...this.translations, ...this.customTranslations };
 
         this.decorationType = window.createTextEditorDecorationType({
             textDecoration: 'underline',
@@ -208,7 +246,7 @@ export class LeanInputAbbreviator {
         this.subscriptions.push(commands.registerTextEditorCommand('lean.input.convert', (editor, edit) => {
             const handler = this.handlers.get(editor);
             if (handler) {
-                handler.convertRange();
+                handler.convert();
             }
         }));
 
@@ -217,7 +255,7 @@ export class LeanInputAbbreviator {
             this.enabled = inputModeEnabled();
             this.languages = inputModeLanguages();
             this.customTranslations = inputModeCustomTranslations();
-            this.allTranslations = {...this.translations, ...this.customTranslations};
+            this.allTranslations = { ...this.translations, ...this.customTranslations };
         }));
     }
 
@@ -227,7 +265,7 @@ export class LeanInputAbbreviator {
 
     get active(): boolean {
         const handler = this.handlers.get(window.activeTextEditor);
-        return handler && !!handler.range;
+        return handler && handler.active;
     }
 
     updateInputActive() {
@@ -259,7 +297,7 @@ export class LeanInputAbbreviator {
     }
 
     private isSupportedFile(document: TextDocument) {
-        return !!languages.match(this.languages,document);
+        return !!languages.match(this.languages, document);
     }
 
     private onChanged(ev: TextDocumentChangeEvent) {
