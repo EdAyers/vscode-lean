@@ -182,8 +182,10 @@ class TextEditorAbbrevHandler {
             }
         } else {
             if (change.text === this.leader) {
-                return this.convert();
-            } else if (change.text.match(/^\s+|[)}⟩]$/)) {
+                this.convert();
+                this.active = true;
+                return this.update();
+            } else if (change.text.match(/^\s+|[^{(]?[)}⟩]$/)) {
                 return this.convert();
             } else if (change.text === '') { // a backspace occurred
                 return this.update(-1);
