@@ -2,9 +2,8 @@ import {
     CancellationToken, commands, Disposable, DocumentFilter, Hover,
     HoverProvider, languages, Position, Range, Selection, TextDocument,
     TextDocumentChangeEvent, TextEditor, TextEditorDecorationType,
-    TextEditorSelectionChangeEvent, window, workspace
+    TextEditorSelectionChangeEvent, window, workspace,
 } from 'vscode';
-import { rsort } from 'semver';
 
 export interface Translations { [abbrev: string]: string; }
 
@@ -66,96 +65,93 @@ function rangeSize(r: Range): number {
     return r.end.character - r.start.character;
 }
 
-interface rangeInfo {
-    index: number,
-    selection: Selection,
-    range: Range,
-    text: string
+interface RangeInfo {
+    index: number;
+    selection: Selection;
+    range: Range;
+    text: string;
 }
 
 /* Each editor has their own abbreviation handler. */
 class TextEditorAbbrevHandler {
-    //ranges: Range[] = [];
     active = false;
 
     constructor(public editor: TextEditor, private abbreviator: LeanInputAbbreviator) { }
     get leader(): string { return this.abbreviator.leader; }
     get enabled(): boolean { return this.abbreviator.enabled; }
 
-
     private deactivate() {
         this.active = false;
         this.editor.setDecorations(this.abbreviator.decorationType, []);
     }
 
-    private getRangeInfo(incr_cursor = 0): rangeInfo[] {
+    private getRangeInfo(incrCursor = 0): RangeInfo[] {
         if (!this.active) { return []; }
-        let selections = this.editor.selections;
-        if (selections.some(s => !s.isSingleLine || !s.isEmpty)) { return []; }
-        let ranges: rangeInfo[] = [];
+        const selections = this.editor.selections;
+        if (selections.some((s) => !s.isSingleLine || !s.isEmpty)) { return []; }
+        const ranges: RangeInfo[] = [];
         for (let i = 0; i < selections.length; i++) {
-            let selection = selections[i];
-            let { line, character } = selection.active;
-            let fullLine = this.editor.document.lineAt(line).text;
-            character += incr_cursor;
-            let beforeCursor = this.editor.document.getText(new Range(line, 0, line, character));
-            let r = /\\\S*?$/.exec(beforeCursor);
+            const selection = selections[i];
+            const line = selection.active.line;
+            const character = selection.active.character + incrCursor;
+            const beforeCursor = this.editor.document.getText(new Range(line, 0, line, character));
+            const r = /\\\S*?$/.exec(beforeCursor);
             if (!r) { continue; }
-            let s = r[0];
+            const s = r[0];
             ranges.push({
                 index: i,
                 selection,
                 range: new Range(line, character - s.length, line, character),
-                text: s
+                text: s,
             });
         }
         return ranges;
     }
 
-    private update(incr_cursor = 0): void {
-        let ris = this.getRangeInfo(incr_cursor);
+    private update(incrCursor = 0): void {
+        const ris = this.getRangeInfo(incrCursor);
         if (ris.length === 0) { return this.deactivate(); }
-        const hackyReplacements: { [input: string]: {repl:string,right?:string} } = {
-            [this.leader + '{{']: {repl:'⦃⦄',right : "}}"},
-            [this.leader + '[[']: {repl:'⟦⟧',right:"]]"},
+        const hackyReplacements: { [input: string]: {repl: string,right?: string} } = {
+            [this.leader + '{{']: {repl:'⦃⦄',right : '}}'},
+            [this.leader + '[[']: {repl:'⟦⟧',right:']]'},
             [this.leader + '<>']: {repl:'⟨⟩'},
         };
         const replacements = [];
-        for (let i = 0; i < ris.length; i++) {
+        for (let i = 0; i < ris.length; i++) { // tslint:disable-line
             const ri = ris[i];
             const replacement = hackyReplacements[ri.text];
             if (replacement) {
-                let {repl,right} = replacement;
+                const {repl,right} = replacement;
                 if (right) {
-                    let t = this.editor.document.getText(new Range(ri.range.end, ri.range.end.translate(0,right.length)))
+                    const t = this.editor.document.getText(
+                        new Range(ri.range.end, ri.range.end.translate(0,right.length)));
                     if (t !== right) {continue;}
                 }
                 const pos = ri.range.start.translate(0, 1);
                 const range = new Range(ri.range.start, ri.range.end.translate(0,(right && right.length) || 0));
                 replacements.push([ri.index, range, repl, pos]);
-                ris[i].text = "";
+                ris[i].text = '';
                 ris[i].range = new Range(pos, pos);
             }
         }
         if (replacements.length !== 0) {
-            this.editor.edit(async builder => {
-                let ss = [...this.editor.selections];
-                for (let [i, range, repl, pos] of replacements) {
+            this.editor.edit(async (builder) => {
+                const ss = [...this.editor.selections];
+                for (const [i, range, repl, pos] of replacements) {
                     builder.replace(range, repl);
                     ss[i] = new Selection(pos,pos);
                 }
                 this.editor.selections = ss;
             });
         }
-        this.editor.setDecorations(this.abbreviator.decorationType, ris.map(x => x.range));
+        this.editor.setDecorations(this.abbreviator.decorationType, ris.map((x) => x.range));
 
     }
     convert(): void {
-        let ris = this.getRangeInfo();
+        const ris = this.getRangeInfo();
         if (ris.length === 0) { return this.deactivate(); }
-        const replacements: [Range, string][] = [];
-        for (let i = 0; i < ris.length; i++) {
-            let { index, selection, range, text } = ris[i];
+        const replacements: Array<[Range, string]> = [];
+        for (const { range, text } of ris) {
             if (rangeSize(range) < 2) { continue; }
             const abbreviation = text.slice(1);
             const replacement = this.abbreviator.findReplacement(abbreviation);
@@ -163,10 +159,10 @@ class TextEditorAbbrevHandler {
         }
         if (replacements.length !== 0) {
             setTimeout(async () => {
-                await this.editor.edit(builder =>
-                    replacements.forEach(([range, repl]) => builder.replace(range, repl))
-                );
-            }, 0)
+                await this.editor.edit((builder) => {
+                    replacements.forEach(([range, repl]) => builder.replace(range, repl));
+                });
+            }, 0);
         }
         this.deactivate();
     }
@@ -176,27 +172,22 @@ class TextEditorAbbrevHandler {
             // This event is triggered by files.autoSave=onDelay
             return;
         }
-        let change = ev.contentChanges[0];
+        const change = ev.contentChanges[0];
         if (!this.active) {
             if (change.text === this.leader) {
                 this.active = true;
                 return this.update(1);
-            }
-            else {
+            } else {
                 return;
             }
-        }
-        else {
+        } else {
             if (change.text === this.leader) {
                 return this.convert();
-            }
-            else if (change.text.match(/^\s+|[)}⟩]$/)) {
+            } else if (change.text.match(/^\s+|[)}⟩]$/)) {
                 return this.convert();
-            }
-            else if (change.text === "") { // a backspace occurred
+            } else if (change.text === '') { // a backspace occurred
                 return this.update(-1);
-            }
-            else {
+            } else {
                 return this.update(change.text.length);
             }
         }
