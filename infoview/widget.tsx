@@ -57,23 +57,41 @@ class WidgetErrorBoundary extends React.Component<{children},{error}> {
     }
 }
 
+function arraysEq(a1 : number[], a2 : number[]) {
+    if (a1.length !== a2.length) {return false;}
+    for (let i = 0; i < a1.length; i++) {
+        if (a1[i] !== a2[i]) {return false;}
+    }
+    return true;
+}
+
 export function Widget(props: WidgetProps): JSX.Element {
     if (!props.widget) { return null; }
+    const [mouseRoute, setMouseRoute] = React.useState([]);
     return <WidgetErrorBoundary>
-        <ViewHtml html={props.widget.html} post={props.post}/>
+        <ViewHtml html={props.widget.html} post={props.post} globalMouse={(r) => {
+            if (arraysEq(r, mouseRoute)) {return; }
+            setMouseRoute(r);
+            props.post({
+                command: 'widget_event',
+                kind: 'onMouse',
+                handler: {r},
+            } as any)
+        }}/>
     </WidgetErrorBoundary>
 }
 
 interface HtmlProps {
     html: WidgetComponent;
     post: (e: WidgetEventRequest) => void;
+    globalMouse: (xs : number[]) => void;
 }
 
 function isWidgetElement(w: WidgetHtml): w is WidgetElement {
     return (typeof w === 'object') && (w as any).t;
 }
 
-function ViewHtml(props: {html: WidgetHtml; post, mouse?}) {
+function ViewHtml(props: {html: WidgetHtml; post, globalMouse, mouse?}) {
     const {html, ...rest} = props;
     if (typeof html === 'string') {
         return html;
@@ -84,7 +102,7 @@ function ViewHtml(props: {html: WidgetHtml; post, mouse?}) {
     }
 }
 
-function ViewWidgetElement(props: {w: WidgetElement; post; mouse?}) {
+function ViewWidgetElement(props: {w: WidgetElement; post; globalMouse; mouse?}) {
     const {w, post, mouse, ...rest} = props;
     const { t:tag, c:children, tt:tooltip } = w;
     let { a:attributes, e:events } = w;
@@ -115,7 +133,7 @@ function ViewWidgetElement(props: {w: WidgetElement; post; mouse?}) {
         }
     }
     if (mouse) {
-        new_attrs["onMouseOver"] = (e: React.MouseEvent) => {
+        new_attrs["onMouseMove"] = (e: React.MouseEvent) => {
             e.stopPropagation();
             mouse();
         }
@@ -137,11 +155,7 @@ function ViewWidgetComponent(props: HtmlProps) {
     let mouse = undefined;
     if (mouse_capture) {
         // I want mouse events.
-        mouse = () => (props.post({
-            command: 'widget_event',
-            kind: 'onMouse',
-            handler: {r},
-        } as any))
+        mouse = () => props.globalMouse(r);
     }
     return props.html.c.map(html => ViewHtml({...props, html, mouse}))
 }
