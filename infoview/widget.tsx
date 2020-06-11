@@ -73,7 +73,7 @@ function isWidgetElement(w: WidgetHtml): w is WidgetElement {
     return (typeof w === 'object') && (w as any).t;
 }
 
-function ViewHtml(props: {html: WidgetHtml; post}) {
+function ViewHtml(props: {html: WidgetHtml; post, mouse?}) {
     const {html, ...rest} = props;
     if (typeof html === 'string') {
         return html;
@@ -84,8 +84,8 @@ function ViewHtml(props: {html: WidgetHtml; post}) {
     }
 }
 
-function ViewWidgetElement(props: {w: WidgetElement; post}) {
-    const {w, post, ...rest} = props;
+function ViewWidgetElement(props: {w: WidgetElement; post; mouse?}) {
+    const {w, post, mouse, ...rest} = props;
     const { t:tag, c:children, tt:tooltip } = w;
     let { a:attributes, e:events } = w;
     if (tag === 'hr') { return <hr />; }
@@ -114,6 +114,12 @@ function ViewWidgetElement(props: {w: WidgetElement; post}) {
             console.error(`unrecognised event kind ${k}`);
         }
     }
+    if (mouse) {
+        new_attrs["onMouseOver"] = (e: React.MouseEvent) => {
+            e.stopPropagation();
+            mouse();
+        }
+    }
     const vs = children.map(html => ViewHtml({html, post, ...rest}));
     if (tooltip) {
         return <Popper popperContent={ViewHtml({ html: tooltip, post, ...rest })} refEltTag={tag} refEltAttrs={new_attrs} key={new_attrs.key}>
@@ -127,6 +133,16 @@ function ViewWidgetElement(props: {w: WidgetElement; post}) {
 }
 
 function ViewWidgetComponent(props: HtmlProps) {
-    return props.html.c.map(html => ViewHtml({...props, html}))
+    const {c, mouse_capture, r} = props.html as any;
+    let mouse = undefined;
+    if (mouse_capture) {
+        // I want mouse events.
+        mouse = () => (props.post({
+            command: 'widget_event',
+            kind: 'onMouse',
+            handler: {r},
+        } as any))
+    }
+    return props.html.c.map(html => ViewHtml({...props, html, mouse}))
 }
 
