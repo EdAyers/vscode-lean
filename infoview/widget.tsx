@@ -68,16 +68,19 @@ function arraysEq(a1 : number[], a2 : number[]) {
 export function Widget(props: WidgetProps): JSX.Element {
     if (!props.widget) { return null; }
     const [mouseRoute, setMouseRoute] = React.useState([]);
+    const globalMouse = (r) => {
+        if (arraysEq(r, mouseRoute)) {return; }
+        setMouseRoute(r);
+        props.post({
+            command: 'widget_event',
+            kind: 'onMouse',
+            handler: {r},
+        } as any)
+    };
     return <WidgetErrorBoundary>
-        <ViewHtml html={props.widget.html} post={props.post} globalMouse={(r) => {
-            if (arraysEq(r, mouseRoute)) {return; }
-            setMouseRoute(r);
-            props.post({
-                command: 'widget_event',
-                kind: 'onMouse',
-                handler: {r},
-            } as any)
-        }}/>
+            <div onMouseMove={() => globalMouse([])}>
+                <ViewHtml html={props.widget.html} post={props.post} globalMouse={globalMouse}/>
+            </div>
     </WidgetErrorBoundary>
 }
 
@@ -85,6 +88,7 @@ interface HtmlProps {
     html: WidgetComponent;
     post: (e: WidgetEventRequest) => void;
     globalMouse: (xs : number[]) => void;
+    mouse?: () => void;
 }
 
 function isWidgetElement(w: WidgetHtml): w is WidgetElement {
@@ -152,7 +156,7 @@ function ViewWidgetElement(props: {w: WidgetElement; post; globalMouse; mouse?})
 
 function ViewWidgetComponent(props: HtmlProps) {
     const {c, mouse_capture, r} = props.html as any;
-    let mouse = undefined;
+    let mouse = props.mouse;
     if (mouse_capture) {
         // I want mouse events.
         mouse = () => props.globalMouse(r);
