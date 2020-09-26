@@ -272,6 +272,7 @@ export class LeanInputAbbreviator {
     }
 
     async updateInputActive(): Promise<void> {
+        if (!this.enabled) {return; }
         await this.setInputActive(this.active);
     }
 
@@ -304,6 +305,7 @@ export class LeanInputAbbreviator {
     }
 
     private async onChanged(ev: TextDocumentChangeEvent) {
+        if (!this.enabled) {return; }
         const editor = window.activeTextEditor;
 
         if (editor.document !== ev.document) { return; } // change happened in active editor
@@ -317,6 +319,7 @@ export class LeanInputAbbreviator {
     }
 
     private async onSelectionChanged(ev: TextEditorSelectionChangeEvent) {
+        if (!this.enabled) {return; }
         const editor = window.activeTextEditor;
 
         if (editor !== ev.textEditor) { return; } // change happened in active editor
