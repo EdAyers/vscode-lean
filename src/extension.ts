@@ -20,6 +20,7 @@ import { LeanSyncService } from './sync';
 import { LeanTaskGutter, LeanTaskMessages } from './taskgutter';
 import { StaticServer } from './staticserver';
 import { LibraryNoteLinkProvider } from './librarynote';
+import { AISuggestionProvider } from './aisuggest';
 
 // Seeing .olean files in the source tree is annoying, we should
 // just globally hide them.
@@ -110,6 +111,7 @@ export function activate(context: ExtensionContext): void {
         context.subscriptions.push(new DocViewProvider(staticServer));
         // Tactic suggestions
         context.subscriptions.push(new TacticSuggestions(server, infoView, LEAN_MODE));
+        context.subscriptions.push(new AISuggestionProvider(server));
     }
     // https://github.com/microsoft/vscode/issues/89038 fixed in 1.47
     if (semver.gte(version, '1.47.0')) {

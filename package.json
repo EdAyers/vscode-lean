@@ -183,6 +183,12 @@
 				"description": "Pastes a suggestion provided by a tactic (e.g. from squeeze_simp)"
 			},
 			{
+				"command": "lean.AIsuggestion",
+				"category": "Lean",
+				"title": "Query GPT3 for a suggestion",
+				"description": "Pastes the result of a GPT3 query"
+			},
+			{
 				"command": "lean.input.convert",
 				"category": "Lean",
 				"title": "Input: Convert Current Abbreviation",
