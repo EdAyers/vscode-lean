@@ -166,6 +166,11 @@
 					"type": "boolean",
 					"default": false,
 					"description": "Display types of all items in the list of completions. By default, only the type of the highlighted item is shown."
+				},
+				"lean.showOutputOnError": {
+					"type": "boolean",
+					"default": true,
+					"description": "If the Lean server writes stderr, open the Lean Server Errors output channel automatically."
 				}
 			}
 		},

@@ -122,17 +122,19 @@ export class Server extends leanclient.Server {
         stderrOutput = stderrOutput || window.createOutputChannel('Lean: Server Errors');
         stderrOutput.clear();
 
+        const showOutputOnError = workspace.getConfiguration('lean').get('showOutputOnError') || true;
+
         this.error.on((e) => {
             switch (e.error) {
                 case 'stderr':
                     stderrOutput.append(e.chunk);
-                    stderrOutput.show();
+                    showOutputOnError && stderrOutput.show();
                     break;
                 case 'connect':
                     // json parsing errors
                     if (e.message.startsWith('cannot parse: ')) {
                         stderrOutput.append(e.message + '\n');
-                        stderrOutput.show();
+                        showOutputOnError && stderrOutput.show();
                         break;
                     }
                     const msg = e.message.startsWith('Unable to start') ?
